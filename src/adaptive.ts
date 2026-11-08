@@ -152,7 +152,12 @@ export function pickClassPracticeQuestion(
 ): Question | undefined {
   if (!questions.length) return undefined
 
-  const skills = [...new Set(questions.map((q) => q.skill))]
+  const eligibleQuestions = questions.filter(
+    (q) =>
+      !recentIds.includes(q.id) &&
+      (modeOverride === 'recommended' || q.mode === modeOverride)
+  )
+  const skills = [...new Set(eligibleQuestions.map((q) => q.skill))]
   if (!skills.length) return undefined
 
   const rankedSkills = skills
