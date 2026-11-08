@@ -1,7 +1,7 @@
 import type { Attempt, Question, SkillProgress } from './types'
 import { emptyProgress } from './adaptive'
 
-const QUESTIONS_KEY = 'skillmeter.questions.v1'
+const QUESTIONS_KEY = 'skillmeter.questions.v2'
 const PROGRESS_KEY = 'skillmeter.progress.v1'
 const ATTEMPTS_KEY = 'skillmeter.attempts.v1'
 
