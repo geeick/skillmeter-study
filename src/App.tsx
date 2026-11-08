@@ -2,14 +2,31 @@ import { useMemo, useState } from 'react'
 import './styles.css'
 import { parseQuestionCsv } from './csv'
 import { gradeAnswer } from './grading'
-import { pickQuestion, updateSkillProgress } from './adaptive'
+import {
+  buildDiagnosticQueue,
+  pickClassPracticeQuestion,
+  pickQuestion,
+  updateDiagnosticProgress,
+  updateSkillProgress
+} from './adaptive'
 import { sampleQuestions } from './sampleData'
-import { getProgress, loadAttempts, loadProgress, loadQuestions, saveAttempts, saveProgress, saveQuestions, skillKey } from './storage'
+import {
+  getProgress,
+  loadAttempts,
+  loadProgress,
+  loadQuestions,
+  saveAttempts,
+  saveProgress,
+  saveQuestions,
+  skillKey
+} from './storage'
 import type { Attempt, Question, SkillProgress, StudyMode } from './types'
 
 const MODES: Array<StudyMode | 'recommended'> = [
   'recommended','flashcard','multiple_choice','written','repair','ordering','numeric'
 ]
+
+type SessionKind = 'skill' | 'diagnosis' | 'class-practice'
 
 function Meter({value}:{value:number}) {
   return <div className="meter"><div className="fill" style={{width:`${value}%`}} /></div>
@@ -88,6 +105,9 @@ export default function App(){
   const [selectedSkill,setSelectedSkill]=useState('')
   const [mode,setMode]=useState<StudyMode|'recommended'>('recommended')
   const [current,setCurrent]=useState<Question|null>(null)
+  const [sessionKind,setSessionKind]=useState<SessionKind>('skill')
+  const [diagnosticQueue,setDiagnosticQueue]=useState<Question[]>([])
+  const [diagnosticIndex,setDiagnosticIndex]=useState(0)
   const [message,setMessage]=useState('')
 
   const classes=useMemo(()=>[...new Set(questions.map(q=>q.className))].sort(),[questions])
@@ -98,14 +118,83 @@ export default function App(){
     ? Math.round(skills.reduce((s,skill)=>s+getProgress(progress,selectedClass,skill).mastery,0)/skills.length)
     : 0
 
-  const start=(skill:string)=>{
+  const recentClassIds=()=>attempts
+    .filter(a=>a.className===selectedClass)
+    .slice(-6)
+    .map(a=>a.questionId)
+
+  const startSkill=(skill:string)=>{
+    setSessionKind('skill')
     setSelectedSkill(skill)
     const p=getProgress(progress,selectedClass,skill)
     const recent=attempts.filter(a=>a.className===selectedClass&&a.skill===skill).slice(-4).map(a=>a.questionId)
     setCurrent(pickQuestion(classQuestions.filter(q=>q.skill===skill),p,mode,recent)??null)
   }
 
+  const startDiagnosis=()=>{
+    const queue=buildDiagnosticQueue(classQuestions,mode)
+    if(!queue.length){
+      setMessage('No questions are available for that study mode.')
+      return
+    }
+    setSessionKind('diagnosis')
+    setDiagnosticQueue(queue)
+    setDiagnosticIndex(0)
+    setSelectedSkill(queue[0].skill)
+    setCurrent(queue[0])
+  }
+
+  const startClassPractice=()=>{
+    const q=pickClassPracticeQuestion(
+      classQuestions,
+      selectedClass,
+      progress,
+      skillKey,
+      mode,
+      recentClassIds()
+    )
+    if(!q){
+      setMessage('No questions are available for that study mode.')
+      return
+    }
+    setSessionKind('class-practice')
+    setSelectedSkill(q.skill)
+    setCurrent(q)
+  }
+
   const next=()=>{
+    if(sessionKind==='diagnosis'){
+      const nextIndex=diagnosticIndex+1
+      if(nextIndex>=diagnosticQueue.length){
+        setCurrent(null)
+        setDiagnosticQueue([])
+        setDiagnosticIndex(0)
+        setMessage('Diagnosis complete. Your skill meters and starting difficulties have been calibrated.')
+        return
+      }
+      const q=diagnosticQueue[nextIndex]
+      setDiagnosticIndex(nextIndex)
+      setSelectedSkill(q.skill)
+      setCurrent(q)
+      return
+    }
+
+    if(sessionKind==='class-practice'){
+      const q=pickClassPracticeQuestion(
+        classQuestions,
+        selectedClass,
+        progress,
+        skillKey,
+        mode,
+        recentClassIds()
+      )
+      if(q){
+        setSelectedSkill(q.skill)
+        setCurrent(q)
+      }
+      return
+    }
+
     if(!selectedSkill)return
     const p=getProgress(progress,selectedClass,selectedSkill)
     const recent=attempts.filter(a=>a.className===selectedClass&&a.skill===selectedSkill).slice(-4).map(a=>a.questionId)
@@ -114,11 +203,21 @@ export default function App(){
 
   const record=(score:number,answer:string)=>{
     if(!current)return
-    const key=skillKey(selectedClass,selectedSkill)
-    const nextProgress={...progress,[key]:updateSkillProgress(getProgress(progress,selectedClass,selectedSkill),score)}
-    const nextAttempts=[...attempts,{questionId:current.id,className:selectedClass,skill:selectedSkill,submittedAnswer:answer,score,timestamp:Date.now()}]
-    setProgress(nextProgress); setAttempts(nextAttempts)
-    saveProgress(nextProgress); saveAttempts(nextAttempts)
+    const activeSkill=current.skill
+    const key=skillKey(selectedClass,activeSkill)
+    const currentProgress=getProgress(progress,selectedClass,activeSkill)
+    const updated=sessionKind==='diagnosis'
+      ? updateDiagnosticProgress(currentProgress,score,current.difficulty)
+      : updateSkillProgress(currentProgress,score)
+    const nextProgress={...progress,[key]:updated}
+    const nextAttempts=[
+      ...attempts,
+      {questionId:current.id,className:selectedClass,skill:activeSkill,submittedAnswer:answer,score,timestamp:Date.now()}
+    ]
+    setProgress(nextProgress)
+    setAttempts(nextAttempts)
+    saveProgress(nextProgress)
+    saveAttempts(nextAttempts)
   }
 
   const importCsv=async(file?:File)=>{
@@ -127,24 +226,47 @@ export default function App(){
       const imported=await parseQuestionCsv(file)
       const ids=new Set(imported.map(q=>q.id))
       const merged=[...questions.filter(q=>!ids.has(q.id)),...imported]
-      setQuestions(merged); saveQuestions(merged)
+      setQuestions(merged)
+      saveQuestions(merged)
       setSelectedClass(imported[0]?.className ?? selectedClass)
       setMessage(`Imported ${imported.length} questions.`)
-    }catch(e){setMessage(e instanceof Error?e.message:'Import failed')}
+    }catch(e){
+      setMessage(e instanceof Error?e.message:'Import failed')
+    }
   }
 
   if(current){
-    const p=getProgress(progress,selectedClass,selectedSkill)
+    const activeSkill=current.skill
+    const p=getProgress(progress,selectedClass,activeSkill)
+    const sessionLabel=sessionKind==='diagnosis'
+      ? `Diagnosis ${diagnosticIndex+1}/${diagnosticQueue.length}`
+      : sessionKind==='class-practice'
+        ? 'Class Practice'
+        : activeSkill
+
     return <main className="shell">
-      <header><button className="brand" onClick={()=>setCurrent(null)}>← SkillMeter</button><span>{selectedClass}</span></header>
+      <header>
+        <button className="brand" onClick={()=>setCurrent(null)}>← SkillMeter</button>
+        <span>{selectedClass}</span>
+      </header>
       <section className="page narrow">
         <div className="study-head">
-          <div><p className="eyebrow">{selectedSkill}</p><h1>Difficulty {p.difficulty}/5</h1></div>
+          <div>
+            <p className="eyebrow">{sessionLabel}</p>
+            <h1>{activeSkill}</h1>
+            <p className="session-subtitle">Difficulty {current.difficulty}/5</p>
+          </div>
           <div className="mastery-number">{p.mastery}%<small>mastery</small></div>
         </div>
         <Meter value={p.mastery}/>
+        {sessionKind==='diagnosis' && <div className="diagnosis-progress">
+          <span>Checking your level across the class</span>
+          <strong>{diagnosticIndex+1} of {diagnosticQueue.length}</strong>
+        </div>}
         <QuestionCard key={current.id+attempts.length} q={current} onDone={record}/>
-        <button className="next" onClick={next}>Next question</button>
+        <button className="next" onClick={next}>
+          {sessionKind==='diagnosis' && diagnosticIndex===diagnosticQueue.length-1 ? 'Finish diagnosis' : 'Next question'}
+        </button>
       </section>
     </main>
   }
@@ -154,25 +276,60 @@ export default function App(){
       <div className="brand">SkillMeter</div>
       <label className="upload">Import CSV<input type="file" accept=".csv" onChange={e=>importCsv(e.target.files?.[0])}/></label>
     </header>
+
     <section className="page">
       {message && <div className="notice" onClick={()=>setMessage('')}>{message}</div>}
+
       <div className="hero">
         <p className="eyebrow">Adaptive study by skill</p>
         <h1>Master the class, one skill at a time.</h1>
-        <p>Each skill has its own mastery meter and difficulty level. Import any subject as a CSV.</p>
+        <p>Diagnose your starting level, practice the whole class, or focus on one skill.</p>
       </div>
+
       <div className="class-tabs">
         {classes.map(c=><button key={c} className={c===selectedClass?'active-tab':'secondary'} onClick={()=>setSelectedClass(c)}>{c}</button>)}
       </div>
+
       <div className="class-summary card">
-        <div><p className="eyebrow">{selectedClass}</p><h2>{classMastery}% overall mastery</h2></div>
+        <div>
+          <p className="eyebrow">{selectedClass}</p>
+          <h2>{classMastery}% overall mastery</h2>
+        </div>
         <div className="mode-wrap">
-          <label>Study mode</label>
+          <label>Question format</label>
           <select value={mode} onChange={e=>setMode(e.target.value as StudyMode|'recommended')}>
             {MODES.map(m=><option key={m} value={m}>{m.replaceAll('_',' ')}</option>)}
           </select>
         </div>
       </div>
+
+      <div className="session-grid">
+        <button className="session-card diagnosis-card" onClick={startDiagnosis}>
+          <span className="session-icon">◎</span>
+          <span>
+            <strong>Diagnosis</strong>
+            <small>Sample every skill and estimate your starting mastery and difficulty.</small>
+          </span>
+          <span className="session-arrow">→</span>
+        </button>
+
+        <button className="session-card practice-card" onClick={startClassPractice}>
+          <span className="session-icon">↻</span>
+          <span>
+            <strong>Class Practice</strong>
+            <small>Mix all skills in the class, with extra attention on your weaker areas.</small>
+          </span>
+          <span className="session-arrow">→</span>
+        </button>
+      </div>
+
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Skills</p>
+          <h2>Practice one skill</h2>
+        </div>
+      </div>
+
       <div className="skills">
         {skills.map(skill=>{
           const p=getProgress(progress,selectedClass,skill)
@@ -181,9 +338,13 @@ export default function App(){
             <div className="skill-main">
               <div className="row spread"><h3>{skill}</h3><strong>{p.mastery}%</strong></div>
               <Meter value={p.mastery}/>
-              <div className="meta"><span>Difficulty {p.difficulty}/5</span><span>{p.attempts} attempts</span><span>{count} questions</span></div>
+              <div className="meta">
+                <span>Difficulty {p.difficulty}/5</span>
+                <span>{p.attempts} attempts</span>
+                <span>{count} questions</span>
+              </div>
             </div>
-            <button onClick={()=>start(skill)}>Study</button>
+            <button onClick={()=>startSkill(skill)}>Study</button>
           </div>
         })}
       </div>
