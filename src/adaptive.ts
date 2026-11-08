@@ -98,8 +98,8 @@ export function pickQuestion(
 
   const pool = modeOverride === 'recommended' ? questions : modeFiltered
   if (!pool.length) return undefined
-  const unseen = pool.filter((q) => !recentIds.includes(q.id))
-  const candidates = unseen.length ? unseen : pool
+  const candidates = pool.filter((q) => !recentIds.includes(q.id))
+  if (!candidates.length) return undefined
 
   const weighted = [...candidates].sort((a, b) => {
     const da = Math.abs(a.difficulty - progress.difficulty)
