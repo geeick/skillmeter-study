@@ -83,3 +83,36 @@
   .session-card strong{font-size:21px}
   .diagnosis-progress{align-items:flex-start;flex-direction:column}
 }
+
+
+.empty-state{
+  padding:42px 28px;
+  text-align:center;
+  max-width:680px;
+  margin:18px auto 0;
+}
+.empty-state h2{
+  margin:10px 0 8px;
+  font-family:Georgia,serif;
+  font-size:30px;
+}
+.empty-state p{
+  color:#746d65;
+  line-height:1.55;
+  max-width:500px;
+  margin:0 auto 20px;
+}
+.empty-icon{
+  width:54px;
+  height:54px;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+  margin:0 auto;
+  background:#eef3ee;
+  font-size:30px;
+  color:#5f806c;
+}
+.empty-upload{
+  display:inline-block;
+}
