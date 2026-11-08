@@ -9,7 +9,6 @@ import {
   updateDiagnosticProgress,
   updateSkillProgress
 } from './adaptive'
-import { sampleQuestions } from './sampleData'
 import {
   getProgress,
   loadAttempts,
@@ -98,10 +97,10 @@ function Feedback({q,text}:{q:Question,text:string}){
 }
 
 export default function App(){
-  const [questions,setQuestions]=useState<Question[]>(()=>loadQuestions(sampleQuestions))
+  const [questions,setQuestions]=useState<Question[]>(()=>loadQuestions([]))
   const [progress,setProgress]=useState<Record<string,SkillProgress>>(()=>loadProgress())
   const [attempts,setAttempts]=useState<Attempt[]>(()=>loadAttempts())
-  const [selectedClass,setSelectedClass]=useState('CS 131')
+  const [selectedClass,setSelectedClass]=useState(()=>questions[0]?.className ?? '')
   const [selectedSkill,setSelectedSkill]=useState('')
   const [mode,setMode]=useState<StudyMode|'recommended'>('recommended')
   const [current,setCurrent]=useState<Question|null>(null)
@@ -224,12 +223,12 @@ export default function App(){
     if(!file)return
     try{
       const imported=await parseQuestionCsv(file)
-      const ids=new Set(imported.map(q=>q.id))
-      const merged=[...questions.filter(q=>!ids.has(q.id)),...imported]
-      setQuestions(merged)
-      saveQuestions(merged)
-      setSelectedClass(imported[0]?.className ?? selectedClass)
-      setMessage(`Imported ${imported.length} questions.`)
+      setQuestions(imported)
+      saveQuestions(imported)
+      setSelectedClass(imported[0]?.className ?? '')
+      setCurrent(null)
+      setSelectedSkill('')
+      setMessage(`Imported ${imported.length} questions. The class list now matches this CSV.`)
     }catch(e){
       setMessage(e instanceof Error?e.message:'Import failed')
     }
@@ -286,6 +285,14 @@ export default function App(){
         <p>Diagnose your starting level, practice the whole class, or focus on one skill.</p>
       </div>
 
+      {classes.length===0 ? (
+        <div className="card empty-state">
+          <div className="empty-icon">＋</div>
+          <h2>No classes yet</h2>
+          <p>Import a study-pack CSV to add a class. Only classes contained in that CSV will appear here.</p>
+          <label className="upload empty-upload">Import CSV<input type="file" accept=".csv" onChange={e=>importCsv(e.target.files?.[0])}/></label>
+        </div>
+      ) : <>
       <div className="class-tabs">
         {classes.map(c=><button key={c} className={c===selectedClass?'active-tab':'secondary'} onClick={()=>setSelectedClass(c)}>{c}</button>)}
       </div>
@@ -348,6 +355,7 @@ export default function App(){
           </div>
         })}
       </div>
+      </>}
     </section>
   </main>
 }
