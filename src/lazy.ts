@@ -45,7 +45,14 @@ export function makeAnswerBlocks(answer: string, seed: string): AnswerBlock[] {
     text,
     correctIndex: index
   }))
-  return seededShuffle(blocks, seed)
+  const shuffled = seededShuffle(blocks, seed)
+  if (
+    shuffled.length > 1 &&
+    shuffled.every((block, index) => block.correctIndex === index)
+  ) {
+    return [...shuffled.slice(1), shuffled[0]]
+  }
+  return shuffled
 }
 
 export function blocksAreCorrect(selected: AnswerBlock[], total: number): boolean {
